@@ -10,11 +10,11 @@
 #define PUMP_RELAY_PIN    26
 
 // =============================
-// CALIBRATION VALUES
-// Adjust based on your sensors
+// SENSOR CALIBRATION
+// Based on your actual readings
 // =============================
 const int DRY_VALUE = 4095;
-const int WET_VALUE = 1200;
+const int WET_VALUE = 2400;
 
 // =============================
 // IRRIGATION THRESHOLDS
@@ -26,10 +26,12 @@ const int PUMP_OFF_THRESHOLD = 70;
 // TIMING
 // =============================
 unsigned long lastPublishTime = 0;
-const unsigned long publishInterval = 15000; // ThingSpeak free tier
+const unsigned long publishInterval = 15000;
 
 unsigned long lastPumpChange = 0;
-const unsigned long relayCooldown = 10000; // 10 sec protection
+const unsigned long relayCooldown = 10000;
+
+const unsigned long maxPumpRuntime = 30000;
 
 // =============================
 // STATE VARIABLES
@@ -42,22 +44,25 @@ bool autoMode = true;
 
 float waterUsage = 0.0;
 
+unsigned long pumpStartTime = 0;
+
 // =============================
-// SENSOR AVERAGING FUNCTION
+// SENSOR AVERAGING
 // =============================
 int readSensorAverage(int pin) {
+
   long total = 0;
 
-  for (int i = 0; i < 10; i++) {
+  for (int i = 0; i < 30; i++) {
     total += analogRead(pin);
     delay(5);
   }
 
-  return total / 10;
+  return total / 30;
 }
 
 // =============================
-// WIFI RECONNECT FUNCTION
+// WIFI RECONNECT
 // =============================
 void reconnectWiFi() {
 
@@ -112,16 +117,16 @@ void loop() {
 
   unsigned long currentMillis = millis();
 
-  // Ensure WiFi stays connected
+  // Keep WiFi connected
   reconnectWiFi();
 
   // =============================
-  // READ SENSORS
+  // READ SENSOR VALUES
   // =============================
   int raw1 = readSensorAverage(MOISTURE_SENSOR_1);
   int raw2 = readSensorAverage(MOISTURE_SENSOR_2);
 
-  // Convert to moisture percentage
+  // Convert raw values to moisture %
   sensor1Value = map(raw1, DRY_VALUE, WET_VALUE, 0, 100);
   sensor1Value = constrain(sensor1Value, 0, 100);
 
@@ -132,7 +137,7 @@ void loop() {
   int avgMoisture = (sensor1Value + sensor2Value) / 2;
 
   // =============================
-  // AUTOMATIC IRRIGATION LOGIC
+  // AUTOMATIC IRRIGATION
   // =============================
   if (autoMode && (currentMillis - lastPumpChange > relayCooldown)) {
 
@@ -142,6 +147,8 @@ void loop() {
       pumpActive = true;
 
       digitalWrite(PUMP_RELAY_PIN, HIGH);
+
+      pumpStartTime = currentMillis;
 
       lastPumpChange = currentMillis;
 
@@ -159,6 +166,19 @@ void loop() {
 
       Serial.println("Pump TURNED OFF");
     }
+  }
+
+  // =============================
+  // SAFETY AUTO SHUTOFF
+  // =============================
+  if (pumpActive &&
+    (currentMillis - pumpStartTime >= maxPumpRuntime)) {
+
+    pumpActive = false;
+
+    digitalWrite(PUMP_RELAY_PIN, LOW);
+
+    Serial.println("Pump AUTO STOPPED (Safety Timeout)");
   }
 
   // =============================
@@ -209,7 +229,7 @@ void loop() {
 
       HTTPClient http;
 
-      String url = "http://api.thingspeak.com/update?api_key=";
+      String url = "https://api.thingspeak.com/update?api_key=";
 
       url += SECRET_WRITE_APIKEY;
 
@@ -235,7 +255,6 @@ void loop() {
       else {
 
         Serial.print("Upload Failed: ");
-
         Serial.println(http.errorToString(httpCode).c_str());
       }
 
